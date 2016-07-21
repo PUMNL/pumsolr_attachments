@@ -1,0 +1,76 @@
+<?php
+
+function pumsolr_attachments_apachesolr_entity_info_alter(&$entity_info) {
+  // attachment added to parent entity document where configured to be indexed together
+  $entity_info['node']['document callback'][] = 'pumsolr_attachments_node_solr_document';
+}
+
+function pumsolr_attachments_node_solr_document(ApacheSolrDocument &$document, $entity, $env_id) {
+
+  require_once(DRUPAL_ROOT.  '/includes/file.mimetypes.inc');
+  list($entity_id, $entity_vid, $entity_bundle) = entity_extract_ids('node', $entity);
+
+  /**
+   * Retrieve a list of File fields
+   */
+  $file_field_names = array();
+  $fields = field_info_field_by_ids();
+  if (is_array($fields)) {
+    foreach ($fields as $field_id => $field_info) {
+      if ($field_info['type'] == 'file') {
+        foreach ($field_info['bundles'] as $entity_type => $bundles) {
+          if (in_array($entity_bundle, $bundles)) {
+            $file_field_names[$field_info['field_name']] = $field_info['field_name'];
+          }
+        }
+      }
+    }
+  }
+
+  $mimetypes = file_mimetype_mapping();
+  $mimeextensions = $mimetypes['extensions'];
+  $mimetypes = $mimetypes['mimetypes'];
+  $file_extensions = array();
+  foreach ($file_field_names as $file_field) {
+    if (isset($entity->$file_field)) {
+      $entity_file_field = $entity->$file_field;
+      //@todo deal with different languages properly
+      foreach($entity_file_field as $language => $files) {
+        foreach ($files as $file) {
+          $file = (object)$file;
+          // perform some basic validation that the file is ok to extract text from
+          $status = ($file->status == 1 ? 1 : 0);
+          if (!$status) {
+            continue;
+          }
+
+          $mimetype_key = array_search($file->filemime, $mimetypes);
+          $extension = false;
+          if ($mimetype_key) {
+            $extension = array_search($mimetype_key, $mimeextensions);
+          }
+          if ($extension && !in_array($extension, $file_extensions)) {
+            $file_extensions[] = $extension;
+            $document->addField('sm_file_extensions', $extension);
+          }
+        }
+      }
+    }
+  }
+
+  return array();
+}
+
+function pumsolr_attachments_facetapi_facet_info($searcher_info) {
+  $facets = array();
+
+  $facets['file_extensions'] = array(
+    'label' => t('Attachment file type'),
+    'description' => t('Filter by attachments file type.'),
+    'field' => 'sm_file_extensions',
+    'facet mincount allowed' => TRUE,
+    'dependency plugins' => array('bundle', 'role'),
+  );
+
+  return $facets;
+}
